@@ -22,6 +22,9 @@ service "splunk" do
   supports  :status => true, :start => true, :stop => true, :restart => true
 end
 
+# Pull out the contents of the static_server_configs array so we can manipulate
+static_configs = []
+node['splunk']['static_server_configs'].each {|c| static_configs.push(c)}
 # True for both a Dedicated Search head for Distributed Search and for non-distributed search
 dedicated_search_head = true
 # Only true if we are a dedicated indexer AND are doing a distributed search setup
@@ -68,13 +71,15 @@ if node['splunk']['distributed_search'] == true
 		Chef::Log.warn("This recipe uses search. Chef Solo does not support search.")
 	else
 	  # Add the Distributed Search Template
-	  node['splunk']['static_server_configs'] << "distsearch"
+	  static_configs.push("distsearch") unless static_configs.include?("distsearch")
+    node.default['splunk']['static_server_configs'] = static_configs
 
 	  # We are a search head
 	  if node.run_list.include?("role[#{node['splunk']['server_role']}]")
 	    search_indexers = search(:node, "role:#{node['splunk']['indexer_role']}")
 	    # Add an outputs.conf.  Search Heads should not be doing any indexing
-	    node['splunk']['static_server_configs'] << "outputs"
+	    static_configs.push("outputs") unless static_configs.include?("outputs")
+      node.default['splunk']['static_server_configs'] = static_configs
 	  else
 	    dedicated_search_head = false
 	  end
@@ -150,7 +155,7 @@ if node['splunk']['ssl_forwarding'] == true
     block do
       inputsPass = `grep -m 1 "password = " #{node['splunk']['server_home']}/etc/system/local/inputs.conf | sed 's/password = //'`
       if inputsPass.match(/^\$1\$/) && inputsPass != node['splunk']['inputsSSLPass']
-        node['splunk']['inputsSSLPass'] = inputsPass
+        node.normal['splunk']['inputsSSLPass'] = inputsPass
         node.save
       end
 
@@ -158,7 +163,7 @@ if node['splunk']['ssl_forwarding'] == true
           outputsPass = `grep -m 1 "sslPassword = " #{node['splunk']['server_home']}/etc/system/local/outputs.conf | sed 's/sslPassword = //'`
 
           if outputsPass.match(/^\$1\$/) && outputsPass != node['splunk']['outputsSSLPass']
-            node['splunk']['outputsSSLPass'] = outputsPass
+            node.normal['splunk']['outputsSSLPass'] = outputsPass
             node.save
           end
         end
@@ -191,7 +196,8 @@ end
 
 if node['splunk']['scripted_auth'] == true && dedicated_search_head == true
   # Be sure to deploy the authentication template.
-  node['splunk']['static_server_configs'] << "authentication"
+  static_configs.push("authentication") unless static_configs.include?("authentication")
+  node.default['splunk']['static_server_configs'] = static_configs 
 
   if !node['splunk']['data_bag_key'].empty?
     scripted_auth_creds = Chef::EncryptedDataBagItem.load(node['splunk']['scripted_auth_data_bag_group'], node['splunk']['scripted_auth_data_bag_name'], node['splunk']['data_bag_key'])
